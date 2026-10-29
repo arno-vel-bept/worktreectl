@@ -25,7 +25,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes zsh
       - run: go vet ./...
-      - run: go test -race -cover ./...
+      - name: Test on macOS
+        if: runner.os == 'macOS'
+        run: go test -race -cover ./...
+      - name: Test on Linux in an isolated process namespace
+        if: runner.os == 'Linux'
+        # Host services may have unreadable same-user /proc entries. Keep
+        # fail-closed discovery intact; isolate tests, then drop privileges.
+        run: |
+          sudo unshare --pid --fork --mount-proc \
+            setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups \
+            env HOME="$HOME" PATH="$PATH" \
+            go test -race -cover ./...
       - run: test -z "$(gofmt -l cmd internal)"
       - run: sh -n install.sh
       - uses: goreleaser/goreleaser-action@v7

@@ -28,6 +28,8 @@ Format Go before committing:
 gofmt -w cmd internal
 ```
 
+Linux CI runs Go tests in a private PID namespace and drops back to the normal runner user. This keeps unrelated host services out of process-discovery tests without weakening the CLI's fail-closed behavior or running the tests as root. On a locked-down local Linux machine, unreadable same-user `/proc` entries can legitimately block cleanup; inspect the reported PIDs or use the equivalent isolated test command from [ci.yml](../.github/workflows/ci.yml).
+
 Keep subprocess output off stdout when `--json` is active. Do not introduce prompts into normal commands, silently bypass safety refusals, or shell-evaluate configuration values.
 
 ## Code map
