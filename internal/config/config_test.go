@@ -78,3 +78,26 @@ func TestUnknownWorktreeSettingFailsButOtherSectionsAreAllowed(t *testing.T) {
 		t.Fatal("unknown setting accepted")
 	}
 }
+
+func TestDependencyReuseIsOptInAndEnvironmentOverridesConfig(t *testing.T) {
+	main := t.TempDir()
+	if Defaults().ReuseDeps {
+		t.Fatal("dependency sharing must be opt-in")
+	}
+	if err := os.WriteFile(filepath.Join(main, ".devcli.toml"), []byte("[worktreectl]\nreuse_dependencies = true\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Load(main, "", func(string) string { return "" })
+	if err != nil || !s.ReuseDeps {
+		t.Fatal(s, err)
+	}
+	s, err = Load(main, "", func(name string) string {
+		if name == "WORKTREECTL_REUSE_DEPENDENCIES" {
+			return "0"
+		}
+		return ""
+	})
+	if err != nil || s.ReuseDeps {
+		t.Fatal(s, err)
+	}
+}

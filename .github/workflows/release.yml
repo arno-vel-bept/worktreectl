@@ -17,7 +17,17 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go test ./...
+      - name: Install Zsh for shell integration tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes zsh
+      - name: Test in an isolated process namespace
+        # Match CI's fail-closed process discovery without unrelated host services.
+        run: |
+          sudo unshare --pid --fork --mount-proc \
+            setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups \
+            env HOME="$HOME" PATH="$PATH" \
+            go test -race ./...
       - uses: goreleaser/goreleaser-action@v7
         with:
           version: '~> v2'

@@ -54,7 +54,7 @@ func fixture(t *testing.T, names ...string) (string, string) {
 	write(t, filepath.Join(main, ".gitignore"), ".env\n")
 	git(t, main, "add", ".")
 	git(t, main, "commit", "-m", "initial")
-	for _, name := range []string{"ROOT", "BASE", "BRANCH_PREFIX", "PORT_BASE", "KILL_TIMEOUT", "MATCH_CMDLINE", "NO_DOCKER", "AUTO_CD"} {
+	for _, name := range []string{"ROOT", "BASE", "BRANCH_PREFIX", "PORT_BASE", "KILL_TIMEOUT", "MATCH_CMDLINE", "NO_DOCKER", "AUTO_CD", "REUSE_DEPENDENCIES"} {
 		t.Setenv("WORKTREECTL_"+name, "")
 	}
 	root := filepath.Join(base, "trees")

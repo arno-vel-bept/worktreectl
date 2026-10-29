@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"github.com/arno-vel-bept/worktreectl/internal/config"
+	"github.com/arno-vel-bept/worktreectl/internal/diagnostic"
 	"github.com/arno-vel-bept/worktreectl/internal/docker"
 	"github.com/arno-vel-bept/worktreectl/internal/process"
 	"github.com/arno-vel-bept/worktreectl/internal/repo"
@@ -25,6 +25,9 @@ type Refusal struct{ Message string }
 
 func (e *Refusal) Error() string              { return e.Message }
 func refuse(format string, args ...any) error { return &Refusal{Message: fmt.Sprintf(format, args...)} }
+func refuseHint(message, hint string) error {
+	return diagnostic.New(message, hint, &Refusal{Message: message})
+}
 
 // Service connects repository/configuration state to filesystem and subprocess
 // operations. The CLI owns output formatting and shell directory changes.
@@ -83,7 +86,7 @@ func (s *Service) New(ctx context.Context, o NewOptions) (NewResult, error) {
 		o.Name = "wt-" + time.Now().Format("0102-150405.000000")
 	}
 	if !validName.MatchString(o.Name) {
-		return NewResult{}, fmt.Errorf("invalid name %q (use letters, digits, . _ -; start with a letter or digit)", o.Name)
+		return NewResult{}, diagnostic.New(fmt.Sprintf("invalid worktree name %q", o.Name), "Use letters, digits, dots, underscores, or hyphens; start with a letter or digit. For example: worktreectl new my-feature.", nil)
 	}
 	if o.Detach && o.Branch != "" {
 		return NewResult{}, fmt.Errorf("--detach and --branch are mutually exclusive")
@@ -93,7 +96,7 @@ func (s *Service) New(ctx context.Context, o NewOptions) (NewResult, error) {
 		return NewResult{}, refuse("root cannot be inside Git's metadata directory")
 	}
 	if _, err := os.Lstat(path); err == nil {
-		return NewResult{}, refuse("%s already exists", path)
+		return NewResult{}, refuseHint(fmt.Sprintf("cannot create worktree: %s already exists", path), "Choose a different name, or use worktreectl list to find and enter the existing checkout.")
 	} else if !os.IsNotExist(err) {
 		return NewResult{}, err
 	}
@@ -114,7 +117,7 @@ func (s *Service) New(ctx context.Context, o NewOptions) (NewResult, error) {
 		return NewResult{}, fmt.Errorf("invalid base ref %q", o.Base)
 	}
 	if _, err := s.Repo.Git(ctx, "rev-parse", "--verify", "--end-of-options", o.Base+"^{commit}"); err != nil {
-		return NewResult{}, fmt.Errorf("unknown base ref %q: %w", o.Base, err)
+		return NewResult{}, diagnostic.New(fmt.Sprintf("base %q does not name a commit", o.Base), "Check the branch or tag name; add --fetch if you need a remote branch.", err)
 	}
 	branch := o.Branch
 	if !o.Detach {
@@ -122,7 +125,16 @@ func (s *Service) New(ctx context.Context, o NewOptions) (NewResult, error) {
 			branch = s.Config.BranchPrefix + o.Name
 		}
 		if _, err := s.Repo.Git(ctx, "check-ref-format", "refs/heads/"+branch); err != nil || strings.HasPrefix(branch, "-") {
-			return NewResult{}, fmt.Errorf("invalid branch %q", branch)
+			return NewResult{}, diagnostic.New(fmt.Sprintf("invalid branch name %q", branch), "Use a valid Git branch name, such as feature/login; avoid spaces and leading hyphens.", nil)
+		}
+		trees, err := s.Repo.Trees(ctx)
+		if err != nil {
+			return NewResult{}, err
+		}
+		for _, w := range trees {
+			if w.Branch == branch {
+				return NewResult{}, refuseHint(fmt.Sprintf("branch %q is already checked out at %s", branch, w.Path), "Enter that checkout, or choose a different branch with --branch NAME.")
+			}
 		}
 	}
 	port, err := s.pickPort(ctx, o.Name)
@@ -140,6 +152,18 @@ func (s *Service) New(ctx context.Context, o NewOptions) (NewResult, error) {
 	}
 	if err := s.Repo.Exclude("/.worktree.env"); err != nil {
 		return NewResult{}, err
+	}
+	// These disposable dependency directories are removed with the checkout,
+	// even when the project's .gitignore does not mention them.
+	for _, dir := range []string{".venv", "venv", "node_modules", ".worktree-venvs"} {
+		if err := s.Repo.Exclude(dir + "/"); err != nil {
+			return NewResult{}, err
+		}
+		// Git treats a symlink as a file, so the directory-only pattern above
+		// does not cover an explicitly reused node_modules link at the root.
+		if err := s.Repo.Exclude("/" + dir); err != nil {
+			return NewResult{}, err
+		}
 	}
 	if err := os.MkdirAll(s.Config.Root, 0755); err != nil {
 		return NewResult{}, err
@@ -160,7 +184,13 @@ func (s *Service) New(ctx context.Context, o NewOptions) (NewResult, error) {
 	// Do not roll back a worktree after a failed hook/copy: a hook may already
 	// have created user data. Leave a clear recovery path instead.
 	fail := func(err error) (NewResult, error) {
-		return NewResult{}, fmt.Errorf("worktree created at %s but initialization failed (kept for inspection): %w", path, err)
+		result := NewResult{Worktree: repo.Worktree{Name: o.Name, Path: path, Branch: branch}, Port: port}
+		hint := diagnostic.Hint(err)
+		if hint != "" {
+			hint += " "
+		}
+		hint += fmt.Sprintf("The checkout was kept for inspection. After fixing setup, run your setup command there; to discard it, preview worktreectl rm %s --dry-run first.", o.Name)
+		return result, diagnostic.New(fmt.Sprintf("worktree created at %s, but setup did not finish: %s", path, err), hint, err)
 	}
 	if err := s.writeEnv(path, o.Name, branch, port); err != nil {
 		return fail(err)
@@ -223,7 +253,7 @@ func (s *Service) hook(ctx context.Context, name, path string, dry bool) (bool, 
 				return true, err
 			}
 			if !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
-				return true, fmt.Errorf("hook %s must be an executable file with a shebang", h)
+				return true, diagnostic.New(fmt.Sprintf("setup/teardown hook %s is not executable", h), "Add a shebang (for example #!/bin/sh) and run chmod +x on the hook, or configure an argv command in .devcli.toml.", nil)
 			}
 			args = []string{h}
 			break
@@ -248,48 +278,6 @@ func dryPrefix(dry bool) string {
 		return "[dry-run] "
 	}
 	return ""
-}
-
-func (s *Service) autoSetup(ctx context.Context, path string) error {
-	has := func(file string) bool { _, err := os.Stat(filepath.Join(path, file)); return err == nil }
-	have := func(tool string) bool { _, err := exec.LookPath(tool); return err == nil }
-	commands := [][]string{}
-	if has("package.json") && !has("node_modules") {
-		switch {
-		case has("pnpm-lock.yaml") && have("pnpm"):
-			commands = append(commands, []string{"pnpm", "install", "--frozen-lockfile"})
-		case (has("bun.lock") || has("bun.lockb")) && have("bun"):
-			commands = append(commands, []string{"bun", "install", "--frozen-lockfile"})
-		case has("yarn.lock") && have("yarn"):
-			commands = append(commands, []string{"yarn", "install"})
-		case has("package-lock.json") && have("npm"):
-			commands = append(commands, []string{"npm", "ci"})
-		case have("npm"):
-			commands = append(commands, []string{"npm", "install"})
-		}
-	}
-	switch {
-	case has("uv.lock") && have("uv"):
-		commands = append(commands, []string{"uv", "sync"})
-	case has("poetry.lock") && have("poetry"):
-		commands = append(commands, []string{"poetry", "install"})
-	case has("requirements.txt") && !has(".venv") && have("python3"):
-		commands = append(commands, []string{"python3", "-m", "venv", ".venv"}, []string{filepath.Join(path, ".venv", "bin", "pip"), "install", "-r", "requirements.txt"})
-	}
-	if has("go.mod") && have("go") {
-		commands = append(commands, []string{"go", "mod", "download"})
-	}
-	env, err := environment(path)
-	if err != nil {
-		return err
-	}
-	for _, args := range commands {
-		s.Log("setup: %s", strings.Join(args, " "))
-		if err := runner.Run(ctx, path, env, s.Stdin, s.Stderr, s.Stderr, args...); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 type Activity struct {

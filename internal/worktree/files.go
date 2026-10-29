@@ -89,6 +89,11 @@ func shellValue(raw string) (string, error) {
 func quoteValue(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
 
 func environment(path string) ([]string, error) {
+	for _, name := range []string{filepath.Base(pythonEnvPath(path)), ".worktree-venvs"} {
+		if err := localDependency(path, name); err != nil {
+			return nil, err
+		}
+	}
 	values, err := readEnv(path)
 	if err != nil {
 		return nil, err
@@ -99,6 +104,40 @@ func environment(path string) ([]string, error) {
 			values[key] = value
 		}
 	}
+	// Never let an activated parent environment or package-manager settings
+	// redirect a new checkout's Python dependencies outside that checkout.
+	for _, key := range []string{"VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV", "PYTHONHOME", "__PYVENV_LAUNCHER__", "PIP_TARGET", "PIP_PREFIX", "PIP_USER", "PIPENV_PIPFILE"} {
+		delete(values, key)
+	}
+	paths := []string{}
+	for _, entry := range filepath.SplitList(values["PATH"]) {
+		foreign := false
+		for _, active := range []string{os.Getenv("VIRTUAL_ENV"), os.Getenv("CONDA_PREFIX")} {
+			if active != "" && repo.Physical(entry) == repo.Physical(filepath.Join(active, "bin")) {
+				foreign = true
+			}
+		}
+		if !foreign {
+			paths = append(paths, entry)
+		}
+	}
+	venv := pythonEnvPath(path)
+	if validVenv(venv) && repo.Under(venv, path) {
+		values["VIRTUAL_ENV"] = venv
+		paths = append([]string{filepath.Join(venv, "bin")}, paths...)
+	}
+	values["PATH"] = strings.Join(paths, string(os.PathListSeparator))
+	values["POETRY_VIRTUALENVS_CREATE"] = "true"
+	values["POETRY_VIRTUALENVS_IN_PROJECT"] = "true"
+	values["POETRY_VIRTUALENVS_PATH"] = filepath.Join(path, ".worktree-venvs")
+	values["UV_PROJECT_ENVIRONMENT"] = venv
+	values["PIPENV_VENV_IN_PROJECT"] = "1"
+	values["PIPENV_IGNORE_VIRTUALENVS"] = "1"
+	if values["VIRTUAL_ENV"] != "" {
+		// Only our validated LOCAL environment may be reused by Pipenv.
+		values["PIPENV_IGNORE_VIRTUALENVS"] = "0"
+	}
+	values["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
 	result := make([]string, 0, len(values))
 	for key, value := range values {
 		result = append(result, key+"="+value)
@@ -191,6 +230,13 @@ func (s *Service) copyIncludes(dst string) error {
 		}
 		for _, src := range matches {
 			rel, _ := filepath.Rel(s.Repo.Main, src)
+			// A glob can select .venv/bin/* without selecting the venv directory
+			// itself. Do not let partial-copy patterns bypass the portability guard.
+			for parent := filepath.Dir(src); parent != s.Repo.Main && repo.Under(parent, s.Repo.Main); parent = filepath.Dir(parent) {
+				if exists(parent, "pyvenv.cfg") {
+					return refuseHint(fmt.Sprintf("cannot copy %s from Python virtualenv %s", rel, parent), "Remove virtualenv contents from copy/.worktreeinclude and let setup create a fresh in-project environment.")
+				}
+			}
 			if err := copyEntry(src, filepath.Join(dst, rel), s.Repo.Main, dst); err != nil {
 				return fmt.Errorf("copy %s: %w", rel, err)
 			}
@@ -221,6 +267,9 @@ func copyEntry(src, dst, sourceRoot, destRoot string) error {
 	info, err := os.Lstat(src)
 	if err != nil {
 		return err
+	}
+	if (info.IsDir() || info.Mode()&os.ModeSymlink != 0) && exists(src, "pyvenv.cfg") {
+		return refuseHint(fmt.Sprintf("cannot copy Python virtualenv %s", src), "Virtualenv scripts and editable installs can point back to the main checkout. Remove it from copy/.worktreeinclude and let setup create a fresh in-project environment.")
 	}
 	if _, err := os.Lstat(dst); err == nil {
 		return nil // Never replace tracked files or existing directories.

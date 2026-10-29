@@ -18,6 +18,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/arno-vel-bept/worktreectl/internal/config"
+	"github.com/arno-vel-bept/worktreectl/internal/diagnostic"
 	"github.com/arno-vel-bept/worktreectl/internal/process"
 	"github.com/arno-vel-bept/worktreectl/internal/repo"
 	"github.com/arno-vel-bept/worktreectl/internal/runner"
@@ -32,9 +33,11 @@ type BuildInfo struct {
 
 type usageError struct{ err error }
 
-func (e *usageError) Error() string          { return e.err.Error() }
-func (e *usageError) Unwrap() error          { return e.err }
-func usage(format string, args ...any) error { return &usageError{fmt.Errorf(format, args...)} }
+func (e *usageError) Error() string { return e.err.Error() }
+func (e *usageError) Unwrap() error { return e.err }
+func usage(format string, args ...any) error {
+	return &usageError{diagnostic.New(fmt.Sprintf(format, args...), "Use worktreectl --help, or add --help to this command.", nil)}
+}
 
 type envelope struct {
 	Command  string     `json:"command"`
@@ -46,6 +49,7 @@ type envelope struct {
 type jsonError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+	Hint    string `json:"hint,omitempty"`
 }
 
 type app struct {
@@ -94,13 +98,16 @@ func Execute(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 			code = child.Code
 		}
 		if a.json || wantsJSON(args) {
-			err = json.NewEncoder(stdout).Encode(envelope{Command: a.command, Data: a.data, Error: &jsonError{Code: code, Message: err.Error()}, Warnings: a.warnings})
+			err = json.NewEncoder(stdout).Encode(envelope{Command: a.command, Data: a.data, Error: &jsonError{Code: code, Message: err.Error(), Hint: diagnostic.Hint(err)}, Warnings: a.warnings})
 			if err != nil {
 				fmt.Fprintf(stderr, "worktreectl: write JSON: %v\n", err)
 				return 1
 			}
 		} else {
 			fmt.Fprintf(stderr, "%s %v\n", a.style(stderr, "#F7768E").Render("worktreectl: error:"), err)
+			if hint := diagnostic.Hint(err); hint != "" {
+				fmt.Fprintf(stderr, "  %s %s\n", a.style(stderr, "#7AA2F7").Render("hint:"), hint)
+			}
 		}
 	} else if a.json {
 		if err := json.NewEncoder(stdout).Encode(envelope{Command: a.command, Data: a.data, Warnings: a.warnings}); err != nil {
@@ -163,7 +170,10 @@ func (a *app) root() *cobra.Command {
 	root.SetIn(a.stdin)
 	root.SetOut(a.stdout)
 	root.SetErr(a.stderr)
-	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return &usageError{err} })
+	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		a.command = cmd.Name()
+		return &usageError{diagnostic.New(err.Error(), "See available options with "+cmd.CommandPath()+" --help.", err)}
+	})
 	root.Flags().BoolVarP(&showVersion, "version", "V", false, "Print build information")
 	f := root.PersistentFlags()
 	f.BoolVar(&a.json, "json", false, "Emit one JSON result; subprocess output goes to stderr")
@@ -175,6 +185,7 @@ func (a *app) root() *cobra.Command {
 	f.BoolVar(&a.shellCD, "shell-cd", false, "Internal shell-integration protocol")
 	_ = f.MarkHidden("shell-cd")
 	root.AddCommand(a.shellInitCommand())
+	root.AddCommand(a.upgradeCommand())
 	root.AddCommand(a.newCommand(), a.execCommand(), a.pathCommand(), a.listCommand(), a.psCommand(), a.stopCommand(), a.removeCommand(), a.gcCommand())
 	root.AddCommand(&cobra.Command{Use: "version", Short: "Print build information", Args: exact(0), RunE: func(_ *cobra.Command, _ []string) error {
 		return a.printVersion()
@@ -279,8 +290,12 @@ func (a *app) printVersion() error {
 
 func exact(n int) cobra.PositionalArgs {
 	return func(cmd *cobra.Command, args []string) error {
-		if err := cobra.ExactArgs(n)(cmd, args); err != nil {
-			return &usageError{err}
+		if len(args) != n {
+			message := "too many arguments for " + cmd.CommandPath()
+			if len(args) < n {
+				message = "missing argument for " + cmd.CommandPath()
+			}
+			return &usageError{diagnostic.New(message, "Usage: "+cmd.UseLine(), nil)}
 		}
 		return nil
 	}
@@ -288,8 +303,8 @@ func exact(n int) cobra.PositionalArgs {
 
 func atMost(n int) cobra.PositionalArgs {
 	return func(cmd *cobra.Command, args []string) error {
-		if err := cobra.MaximumNArgs(n)(cmd, args); err != nil {
-			return &usageError{err}
+		if len(args) > n {
+			return &usageError{diagnostic.New("too many arguments for "+cmd.CommandPath(), "Usage: "+cmd.UseLine(), nil)}
 		}
 		return nil
 	}
@@ -301,7 +316,7 @@ func (a *app) init(ctx context.Context) (*worktree.Service, error) {
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
-		return nil, err
+		return nil, diagnostic.New("cannot find the current directory; it may have been removed", "Use cd to enter an existing project checkout, then retry.", err)
 	}
 	r, err := repo.Discover(ctx, cwd)
 	if err != nil {
@@ -317,7 +332,7 @@ func (a *app) init(ctx context.Context) (*worktree.Service, error) {
 			return nil, fmt.Errorf("invalid configured base %q", cfg.Base)
 		}
 		if _, err := r.Git(ctx, "rev-parse", "--verify", "--end-of-options", cfg.Base+"^{commit}"); err != nil {
-			return nil, err
+			return nil, diagnostic.New(fmt.Sprintf("configured base %q does not name a commit", cfg.Base), "Check base in .devcli.toml or WORKTREECTL_BASE; fetch first if it is a remote branch.", err)
 		}
 		r.Base = cfg.Base
 	}
@@ -418,6 +433,7 @@ func splitCommand(cmd *cobra.Command, args []string) (string, []string, error) {
 
 func (a *app) newCommand() *cobra.Command {
 	o := worktree.NewOptions{}
+	reuseDeps := false
 	c := &cobra.Command{Use: "new [NAME] [flags] [-- CMD...]", Aliases: []string{"start"}, Short: "Create a worktree, copy local files, and run setup", RunE: func(cmd *cobra.Command, args []string) error {
 		name, child, err := splitCommand(cmd, args)
 		if err != nil {
@@ -431,12 +447,18 @@ func (a *app) newCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
+		if cmd.Flags().Changed("reuse-deps") {
+			s.Config.ReuseDeps = reuseDeps
+		}
 		unlock, err := s.Lock(cmd.Context())
 		if err != nil {
 			return err
 		}
 		result, err := func() (worktree.NewResult, error) { defer unlock(); return s.New(cmd.Context(), o) }()
 		if err != nil {
+			if result.Path != "" {
+				a.data = result
+			}
 			return err
 		}
 		a.data = result
@@ -462,6 +484,7 @@ func (a *app) newCommand() *cobra.Command {
 	f.BoolVar(&o.Fetch, "fetch", false, "Fetch/prune remotes before creation")
 	f.BoolVar(&o.NoCopy, "no-copy", false, "Skip copying local files")
 	f.BoolVar(&o.NoSetup, "no-setup", false, "Skip setup hooks and dependency installation")
+	f.BoolVar(&reuseDeps, "reuse-deps", false, "Share matching node_modules from the main checkout when safe (Python stays isolated)")
 	return c
 }
 

@@ -4,11 +4,14 @@ package repo
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/arno-vel-bept/worktreectl/internal/diagnostic"
 	"github.com/arno-vel-bept/worktreectl/internal/runner"
 )
 
@@ -31,16 +34,35 @@ type Repo struct {
 }
 
 func Discover(ctx context.Context, cwd string) (*Repo, error) {
-	out, err := runner.Output(ctx, cwd, "git", "rev-parse", "--show-toplevel")
+	out, err := gitOutput(ctx, cwd, "rev-parse", "--is-bare-repository")
 	if err != nil {
-		return nil, fmt.Errorf("not inside a working Git checkout: %w", err)
+		switch {
+		case errors.Is(err, exec.ErrNotFound):
+			return nil, diagnostic.New("Git is not installed or is not on PATH", "Install Git 2.31 or newer, then retry.", err)
+		case strings.Contains(err.Error(), "not a git repository"):
+			return nil, diagnostic.New("not in a Git repository", "Run this command from your project's checkout (or any directory inside it).", err)
+		case strings.Contains(err.Error(), "dubious ownership"):
+			return nil, diagnostic.New("Git does not trust this repository's ownership", "Check the directory's owner. Only mark it as safe in Git if you trust this checkout.", err)
+		default:
+			return nil, fmt.Errorf("cannot open the Git repository: %w", err)
+		}
+	}
+	if strings.TrimSpace(string(out)) == "true" {
+		return nil, diagnostic.New("this is a bare Git repository, not a working checkout", "Clone it into a directory with a main checkout, then run worktreectl there.", nil)
+	}
+	out, err = gitOutput(ctx, cwd, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return nil, diagnostic.New("not in a Git working checkout", "Run this command outside .git, from your project's checkout.", err)
 	}
 	// Git terminates path output with one newline; other trailing whitespace
 	// can be part of the directory name and must survive shell integration.
 	r := &Repo{Current: Physical(strings.TrimSuffix(string(out), "\n"))}
 	trees, err := r.Trees(ctx)
-	if err != nil || len(trees) == 0 {
+	if err != nil {
 		return nil, fmt.Errorf("cannot discover Git worktrees: %w", err)
+	}
+	if len(trees) == 0 {
+		return nil, diagnostic.New("Git did not report any worktrees", "Check the repository with git worktree list.", nil)
 	}
 	if trees[0].Bare {
 		return nil, fmt.Errorf("bare repositories are not supported; use a repository with a main checkout")
@@ -53,6 +75,9 @@ func Discover(ctx context.Context, cwd string) (*Repo, error) {
 	r.Common = strings.TrimSuffix(string(out), "\n")
 	if !filepath.IsAbs(r.Common) {
 		r.Common = filepath.Join(r.Main, r.Common)
+	}
+	if _, err := r.Git(ctx, "rev-parse", "--verify", "HEAD^{commit}"); err != nil {
+		return nil, diagnostic.New("this repository has no initial commit yet", "Create your first commit with git add and git commit, then retry.", err)
 	}
 	out, err = r.Git(ctx, "symbolic-ref", "--quiet", "--short", "HEAD")
 	if err != nil {
@@ -70,7 +95,14 @@ func (r *Repo) Git(ctx context.Context, args ...string) ([]byte, error) {
 	if dir == "" {
 		dir = r.Current
 	}
-	return runner.Output(ctx, dir, append([]string{"git"}, args...)...)
+	return gitOutput(ctx, dir, args...)
+}
+
+func gitOutput(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	// Keep Git's diagnostics predictable even when the user's locale is not
+	// English. This does not change the environment of hooks or user commands.
+	env := append(os.Environ(), "LC_ALL=C")
+	return runner.OutputEnv(ctx, dir, env, append([]string{"git"}, args...)...)
 }
 
 func (r *Repo) Trees(ctx context.Context) ([]Worktree, error) {
@@ -143,9 +175,9 @@ func (r *Repo) Resolve(ctx context.Context, target, prefix string) (Worktree, er
 		return matches[0], nil
 	}
 	if len(matches) > 1 {
-		return Worktree{}, fmt.Errorf("ambiguous worktree %q; use its full path", target)
+		return Worktree{}, diagnostic.New(fmt.Sprintf("more than one worktree matches %q", target), "Use a full path from worktreectl list to select the right checkout.", nil)
 	}
-	return Worktree{}, fmt.Errorf("no worktree matches %q (see: worktreectl list)", target)
+	return Worktree{}, diagnostic.New(fmt.Sprintf("no worktree matches %q", target), "Run worktreectl list to see available names, branches, and paths.", nil)
 }
 
 func (r *Repo) Dirty(ctx context.Context, path string) (bool, error) {

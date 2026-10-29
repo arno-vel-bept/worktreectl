@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arno-vel-bept/worktreectl/internal/diagnostic"
 	"github.com/arno-vel-bept/worktreectl/internal/docker"
 	"github.com/arno-vel-bept/worktreectl/internal/process"
 	"github.com/arno-vel-bept/worktreectl/internal/repo"
@@ -28,7 +29,7 @@ type CleanupResult struct {
 
 func (s *Service) notMain(w repo.Worktree) error {
 	if w.Main || repo.Physical(w.Path) == repo.Physical(s.Repo.Main) {
-		return refuse("refusing to act on the main checkout (%s)", s.Repo.Main)
+		return refuseHint(fmt.Sprintf("%s is the main checkout; it cannot be stopped or removed", s.Repo.Main), "Run worktreectl list, then select a linked checkout with worktreectl rm NAME or worktreectl stop NAME.")
 	}
 	return nil
 }
@@ -39,10 +40,10 @@ func (s *Service) safeSnapshots(ctx context.Context) (process.Snapshot, docker.S
 		return p, d, err
 	}
 	if !p.Reliable {
-		return p, d, refuse("refusing cleanup without reliable process discovery: %s", p.Warning)
+		return p, d, refuseHint("cannot safely clean up: process discovery is incomplete", p.Warning+" Stop the reported services yourself and restore process discovery before retrying.")
 	}
 	if d.Warning != "" {
-		return p, d, refuse("refusing cleanup without container discovery; retry when Docker is available or pass --no-docker")
+		return p, d, refuseHint("cannot safely clean up while Docker is unreachable", "Start Docker and retry, or explicitly pass --no-docker to leave all Docker resources untouched.")
 	}
 	return p, d, nil
 }
@@ -120,10 +121,10 @@ func (s *Service) checkRemove(ctx context.Context, w repo.Worktree, o RemoveOpti
 		return err
 	}
 	if w.Locked && !o.Force {
-		return refuse("%s is locked; unlock it or pass --force", w.Path)
+		return refuseHint(fmt.Sprintf("worktree %s is locked", w.Path), fmt.Sprintf("Check why it was locked before running git worktree unlock %s. --force overrides the lock and may discard work.", quoteValue(w.Path)))
 	}
 	if _, err := os.Stat(w.Path); err != nil {
-		return fmt.Errorf("worktree is missing or inaccessible; inspect git worktree prune --dry-run: %w", err)
+		return diagnostic.New(fmt.Sprintf("worktree %s is missing or inaccessible", w.Path), "Check the path and permissions. If it was already deleted, inspect git worktree prune --dry-run before pruning its registration.", err)
 	}
 	if o.Force {
 		return nil
@@ -133,7 +134,7 @@ func (s *Service) checkRemove(ctx context.Context, w repo.Worktree, o RemoveOpti
 		return err
 	}
 	if dirty {
-		return refuse("%s has uncommitted changes; commit/stash them or pass --force", w.Path)
+		return refuseHint(fmt.Sprintf("worktree %s has uncommitted changes", w.Path), fmt.Sprintf("Inspect them with git -C %s status, then commit or stash them (including untracked files). Use --force only if you intend to discard them.", quoteValue(w.Path)))
 	}
 	if w.Branch == "" {
 		merged, err := s.Repo.Merged(ctx, w.Head, s.Repo.Base)
@@ -145,7 +146,7 @@ func (s *Service) checkRemove(ctx context.Context, w repo.Worktree, o RemoveOpti
 			return err
 		}
 		if !merged && strings.TrimSpace(string(out)) == "" {
-			return refuse("detached HEAD has commits on no branch; save them with git -C %q switch -c <branch>, or pass --force", w.Path)
+			return refuse("detached HEAD has commits on no branch; save them with git -C %s switch -c <branch>, or pass --force", quoteValue(w.Path))
 		}
 	}
 	return nil
@@ -267,7 +268,7 @@ func (s *Service) Remove(ctx context.Context, w repo.Worktree, o RemoveOptions) 
 		s.Log("kept branch %s", w.Branch)
 	}
 	if repo.Under(s.Repo.Current, w.Path) {
-		s.Log("your shell was inside the removed worktree; cd %q", s.Repo.Main)
+		s.Log("your shell was inside the removed worktree; cd %s", quoteValue(s.Repo.Main))
 	}
 	return CleanupResult{Path: w.Path, MainPath: s.Repo.Main, DryRun: o.DryRun, Actions: actions, BranchKept: branchKept}, nil
 }

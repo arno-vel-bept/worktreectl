@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/arno-vel-bept/worktreectl/internal/diagnostic"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -24,6 +25,7 @@ type Settings struct {
 	Setup        []string `toml:"setup"`
 	Teardown     []string `toml:"teardown"`
 	AutoSetup    bool     `toml:"auto_setup"`
+	ReuseDeps    bool     `toml:"reuse_dependencies"`
 	AutoCD       bool     `toml:"auto_cd"`
 	File         string   `toml:"-"`
 }
@@ -42,13 +44,17 @@ func Load(main, explicit string, getenv func(string) string) (Settings, error) {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil && (!os.IsNotExist(err) || explicit != "") {
-		return s, fmt.Errorf("read configuration: %w", err)
+		message := fmt.Sprintf("cannot read configuration file %s", path)
+		if os.IsNotExist(err) {
+			message = fmt.Sprintf("configuration file %s does not exist", path)
+		}
+		return s, diagnostic.New(message, "Check the --config path and file permissions, or omit --config to use the main checkout's .devcli.toml.", err)
 	}
 	if err == nil {
 		// Other tools can own other sections of .devcli.toml.
 		var doc map[string]any
 		if err := toml.Unmarshal(data, &doc); err != nil {
-			return s, fmt.Errorf("parse %s: %w", path, err)
+			return s, diagnostic.New(fmt.Sprintf("invalid TOML in %s: %s", path, err), "Fix the configuration's syntax before retrying.", err)
 		}
 		if section, exists := doc["worktreectl"]; exists {
 			if _, ok := section.(map[string]any); !ok {
@@ -59,7 +65,7 @@ func Load(main, explicit string, getenv func(string) string) (Settings, error) {
 				return s, fmt.Errorf("parse %s: %w", path, err)
 			}
 			if err := toml.NewDecoder(bytes.NewReader(encoded)).DisallowUnknownFields().Decode(&s); err != nil {
-				return s, fmt.Errorf("parse [worktreectl] in %s: %w", path, err)
+				return s, diagnostic.New(fmt.Sprintf("invalid [worktreectl] settings in %s: %s", path, err), "Check setting names and types against examples/devcli.toml; other tools' settings belong in separate tables.", err)
 			}
 		}
 		s.File, _ = filepath.Abs(path)
@@ -80,7 +86,7 @@ func Load(main, explicit string, getenv func(string) string) (Settings, error) {
 			*dest = n
 		}
 	}
-	for name, dest := range map[string]*bool{"MATCH_CMDLINE": &s.MatchCmdline, "NO_DOCKER": &s.NoDocker, "AUTO_CD": &s.AutoCD} {
+	for name, dest := range map[string]*bool{"MATCH_CMDLINE": &s.MatchCmdline, "NO_DOCKER": &s.NoDocker, "AUTO_CD": &s.AutoCD, "REUSE_DEPENDENCIES": &s.ReuseDeps} {
 		if v := getenv("WORKTREECTL_" + name); v != "" {
 			b, err := strconv.ParseBool(v)
 			if err != nil {

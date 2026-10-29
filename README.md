@@ -10,7 +10,7 @@ One checkout for your feature. Another for an experiment. A third for an agent. 
 
 Built in Go with [Cobra](https://github.com/spf13/cobra) and [Lip Gloss](https://github.com/charmbracelet/lipgloss). Polished on a terminal; predictable in a pipeline. No TUI to navigate, no surprise prompts.
 
-**[Install](#install) · [Quick start](#quick-start) · [Configuration](#one-binary-every-repository) · [Full reference](docs/reference.md) · [Development](docs/development.md)**
+**[Install](#install) · [Upgrade](#upgrade) · [Quick start](#quick-start) · [Configuration](#one-binary-every-repository) · [Full reference](docs/reference.md) · [Development](docs/development.md)**
 
 ## Why worktreectl?
 
@@ -27,16 +27,16 @@ Built in Go with [Cobra](https://github.com/spf13/cobra) and [Lip Gloss](https:/
 
 The [public installer Gist](https://gist.github.com/arno-vel-bept/50e26e23356eac0536732c416a2aecf6) downloads binaries from [GitHub Releases](https://github.com/arno-vel-bept/worktreectl/releases), verifies their SHA-256 checksums, and installs to `~/.local/bin`.
 
-> **First release pending.** The repository and installer are published; versioned binaries require the first release tag. Until then, use the [source-build instructions](docs/development.md#build-and-check). The commands below show installation of `v0.1.0` once that release is available.
+Current release: **[v0.2.0](https://github.com/arno-vel-bept/worktreectl/releases/tag/v0.2.0)**.
 
 ### Download and inspect first (recommended)
 
 ```sh
 curl --fail --location --proto '=https' --proto-redir '=https' \
-  https://gist.githubusercontent.com/arno-vel-bept/50e26e23356eac0536732c416a2aecf6/raw/57801bbe6c4c06ffc5b6b4b954ede5e105406341/install.sh \
+  https://gist.githubusercontent.com/arno-vel-bept/50e26e23356eac0536732c416a2aecf6/raw/1d269e77069c049fcd5ce0873efab868bb48ad42/install.sh \
   -o install-worktreectl.sh
 less install-worktreectl.sh
-sh install-worktreectl.sh --version v0.1.0
+sh install-worktreectl.sh --version v0.2.0
 ```
 
 The raw URL is pinned to the reviewed installer revision, not a moving Gist URL.
@@ -47,11 +47,34 @@ Use only after trusting the installer source:
 
 ```sh
 curl --fail --location --proto '=https' --proto-redir '=https' \
-  https://gist.githubusercontent.com/arno-vel-bept/50e26e23356eac0536732c416a2aecf6/raw/57801bbe6c4c06ffc5b6b4b954ede5e105406341/install.sh | \
-  sh -s -- --version v0.1.0
+  https://gist.githubusercontent.com/arno-vel-bept/50e26e23356eac0536732c416a2aecf6/raw/1d269e77069c049fcd5ce0873efab868bb48ad42/install.sh | \
+  sh -s -- --version v0.2.0
 ```
 
 The installer prints any PATH changes you need; it never edits shell startup files. Customize the destination with `--bin-dir /absolute/path`. Checksums catch corrupted downloads, not a compromised release account.
+
+## Upgrade
+
+Starting with **v0.2.0**, upgrade in place with no installer, Go, or curl required:
+
+```sh
+worktreectl upgrade --check # Optional: show the latest stable version without changing files.
+worktreectl upgrade         # Verify checksums and atomically replace this executable.
+```
+
+This works outside Git repositories and keeps your install path, project files, and shell integration unchanged. Failed downloads leave the previous binary intact. Use `worktreectl upgrade --version vX.Y.Z` to choose an exact published release; the default never downgrades a newer installed version.
+
+**Already on v0.1.0?** That binary has no upgrade command. Do this once, after reviewing/trusting the installer:
+
+```sh
+curl --fail --location --proto '=https' --proto-redir '=https' \
+  https://gist.githubusercontent.com/arno-vel-bept/50e26e23356eac0536732c416a2aecf6/raw/1d269e77069c049fcd5ce0873efab868bb48ad42/install.sh \
+  -o install-worktreectl.sh
+sh install-worktreectl.sh --latest
+worktreectl version
+```
+
+If you originally used a custom `--bin-dir`, pass that same directory again. The installer can always be rerun with `--latest` or `--version` to upgrade/reinstall any previous version. Package-manager-owned or read-only installations should use their package manager, or be reinstalled into a user-owned directory such as `~/.local/bin`.
 
 ## Quick start
 
@@ -82,6 +105,7 @@ Autocd needs the shell function because a binary cannot change its parent shell'
 | `stop [NAME]` | Stop resources but keep the checkout |
 | `rm [NAME]` | Teardown, stop resources, and remove the checkout |
 | `gc` | Remove only clean, merged, idle, unlocked worktrees |
+| `upgrade [--check]` | Upgrade this binary to the latest stable release, independently of repositories |
 | `completion SHELL` / `shell-init SHELL` | Set up completions and shell autocd |
 
 Names can be a directory name, full path, or branch. Omit the name to target the current checkout. Use `--` before subprocess flags, and `worktreectl COMMAND --help` for every option.
@@ -104,6 +128,15 @@ teardown = ["make", "teardown"]
 Commands are argv arrays, not implicitly evaluated shell expressions. Without configured hooks, executable `.worktreectl/setup` and `.worktreectl/teardown` files are supported; setup can also autodetect common Node, Python, and Go dependency managers.
 
 Everything is optional. See the [annotated example](examples/devcli.toml) and [configuration reference](docs/reference.md#repository-configuration) for defaults, environment overrides, local-file copying, and hook behavior.
+
+### What's new in v0.2.0
+
+- **Helpful errors.** Common mistakes such as running outside a Git repository get a short explanation and a recovery hint, including in JSON.
+- **Local Python environments.** uv, Poetry, Pipenv, and plain pip setup keep environments in the checkout so removal cleans them up. `exec -- python` selects the local environment.
+- **Manager-aware JS/TS setup.** Respect `packageManager`, npm/pnpm workspace installs, and frozen lockfiles. Isolated dependencies by default; guarded `node_modules` sharing is opt-in.
+- **Easy upgrades.** Run `worktreectl upgrade` for the latest stable release, or `upgrade --check` to check without changing files.
+
+See the [dependency setup guide](docs/reference.md#dependency-setup) for supported layouts, cleanup ownership, and sharing limitations.
 
 ## Safe defaults—not silent destruction
 

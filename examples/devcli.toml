@@ -9,6 +9,7 @@ kill_timeout = 10                # Seconds between SIGTERM and SIGKILL.
 match_cmdline = false            # Opt-in: can match editors referencing a path.
 no_docker = false
 auto_setup = true
+reuse_dependencies = false      # v0.2.0: opt-in guarded node_modules sharing; Python stays local.
 auto_cd = true                  # Shell integration: enter after new, return after rm.
 
 # Omit copy to use .worktreeinclude, or .env / .env.* if it doesn't exist.
@@ -18,5 +19,7 @@ copy = [".env", ".env.*"]
 # Commands are argv arrays, NOT shell expressions. They run in the target
 # worktree with .worktree.env loaded. Omit to use executable hooks in
 # .worktreectl/setup and .worktreectl/teardown, then dependency autodetection.
+# Python manager environments are confined to the checkout and removed with it.
+# Use an explicit hook for nonstandard project layouts or dependency groups.
 # setup = ["make", "setup"]
 # teardown = ["make", "teardown"]
