@@ -28,7 +28,18 @@ jobs:
             setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups \
             env HOME="$HOME" PATH="$PATH" \
             go test -race ./...
+      - name: Check for an already published release
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # GitHub can emit a tag-push event when a manual release creates its tag.
+        # Do not rebuild/replace assets after that verified release is public.
+        run: |
+          published="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            | jq -s --arg tag "$GITHUB_REF_NAME" 'any(.[][]; .tag_name == $tag and .draft == false)')"
+          echo "published=$published" >> "$GITHUB_OUTPUT"
       - uses: goreleaser/goreleaser-action@v7
+        if: steps.existing.outputs.published != 'true'
         with:
           version: '~> v2'
           args: release --clean

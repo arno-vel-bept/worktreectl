@@ -76,7 +76,7 @@ An installer **404** means the requested release or asset is unavailable. After 
 
 If hosted runners are unavailable, validate the reviewed commit locally with `make test` and `make check`, then build the same four archives with GoReleaser v2. The `v0.1.0` release used this fallback after Linux CI passed but GitHub could not allocate a macOS runner.
 
-Start from a clean checkout of the commit to release, and choose a new version. Create the tag **locally**, without pushing it, so the automated release workflow does not race with the manual upload:
+Start from a clean checkout of the commit to release, and choose a new version. Create the tag **locally**, without pushing it, so the automated release workflow does not start before the manual upload. GitHub can emit a tag-push event when publishing the manual release; the workflow checks for an already published release and skips GoReleaser in that case, leaving verified public assets untouched:
 
 ```sh
 version=v0.2.1 # Choose the next unreleased version.
