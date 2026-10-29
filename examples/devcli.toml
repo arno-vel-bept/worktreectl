@@ -1,0 +1,22 @@
+# Copy to the MAIN checkout as .devcli.toml. All settings are optional.
+# Other tools may add their own sections to this file.
+[worktreectl]
+root = "../my-project.worktrees" # Relative to the main checkout, not this file.
+base = "main"                   # Used for ahead counts and safe cleanup.
+branch_prefix = "wt/"
+port_base = 4000                 # Ports are assigned in steps of 10.
+kill_timeout = 10                # Seconds between SIGTERM and SIGKILL.
+match_cmdline = false            # Opt-in: can match editors referencing a path.
+no_docker = false
+auto_setup = true
+auto_cd = true                  # Shell integration: enter after new, return after rm.
+
+# Omit copy to use .worktreeinclude, or .env / .env.* if it doesn't exist.
+# Use copy = [] to disable copying. Globs are relative to the main checkout.
+copy = [".env", ".env.*"]
+
+# Commands are argv arrays, NOT shell expressions. They run in the target
+# worktree with .worktree.env loaded. Omit to use executable hooks in
+# .worktreectl/setup and .worktreectl/teardown, then dependency autodetection.
+# setup = ["make", "setup"]
+# teardown = ["make", "teardown"]

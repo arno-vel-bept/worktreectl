@@ -1,0 +1,46 @@
+version: 2
+
+project_name: worktreectl
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: worktreectl
+    main: ./cmd/worktreectl
+    binary: worktreectl
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+
+archives:
+  - id: release
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - examples/devcli.toml
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^test:'
+      - '^docs:'
+
+release:
+  draft: false
