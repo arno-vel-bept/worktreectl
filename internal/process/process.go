@@ -57,6 +57,8 @@ func Capture(ctx context.Context) (Snapshot, error) {
 	switch runtime.GOOS {
 	case "linux":
 		s.Reliable = true
+		protected, _ := s.protected(os.Getpid())
+		unreadable := []int{}
 		for _, p := range s.Processes {
 			dir := filepath.Join("/proc", strconv.Itoa(p.PID))
 			info, err := os.Stat(dir)
@@ -69,11 +71,19 @@ func Capture(ctx context.Context) (Snapshot, error) {
 			cwd, err := os.Readlink(filepath.Join(dir, "cwd"))
 			if err == nil {
 				cwds[p.PID] = cwd
-			} else if os.IsPermission(err) {
-				// Fail closed: an unreadable cwd can conceal a worktree process.
-				s.Reliable = false
-				s.Warning = "some process working directories are inaccessible; check /proc permissions"
+			} else if os.IsPermission(err) && !protected[p.PID] {
+				// Protected caller processes can never be cleanup targets, so their
+				// inaccessible cwd does not hide a process we would signal. Other
+				// unreadable same-user processes still fail closed.
+				unreadable = append(unreadable, p.PID)
 			}
+		}
+		if cwds[os.Getpid()] == "" {
+			s.Reliable = false
+			s.Warning = "cannot inspect the caller's working directory; check /proc permissions"
+		} else if len(unreadable) > 0 {
+			s.Reliable = false
+			s.Warning = fmt.Sprintf("working directories for process(es) %v are inaccessible; check /proc permissions", unreadable)
 		}
 	case "darwin":
 		// lsof normally exits 1 when other users' processes cannot be inspected.
@@ -135,28 +145,9 @@ func ParseCwds(out string) map[int]string {
 
 func (s Snapshot) Match(root string, self int, byCommand, piped bool) (matched, skipped []Process) {
 	matched, skipped = []Process{}, []Process{}
-	byPID := map[int]Process{}
+	protected, byPID := s.protected(self)
 	for _, p := range s.Processes {
-		byPID[p.PID] = p
-	}
-	ancestors := map[int]bool{}
-	for q := self; q > 0 && !ancestors[q]; q = byPID[q].PPID {
-		ancestors[q] = true
-	}
-	for _, p := range s.Processes {
-		if p.PID <= 1 || ancestors[p.PID] || strings.HasPrefix(p.State, "Z") {
-			continue
-		}
-		descendant := false
-		seen := map[int]bool{}
-		for q := p.PPID; q > 0 && !seen[q]; q = byPID[q].PPID {
-			seen[q] = true
-			if q == self {
-				descendant = true
-				break
-			}
-		}
-		if descendant {
+		if protected[p.PID] || strings.HasPrefix(p.State, "Z") {
 			continue
 		}
 		if (p.Cwd != "" && repo.Under(p.Cwd, root)) || (byCommand && mentions(p.Command, root)) {
@@ -168,6 +159,34 @@ func (s Snapshot) Match(root string, self int, byCommand, piped bool) (matched, 
 		}
 	}
 	return matched, skipped
+}
+
+// Use the same caller-protection graph for discovery and signal matching.
+func (s Snapshot) protected(self int) (map[int]bool, map[int]Process) {
+	byPID := map[int]Process{}
+	for _, p := range s.Processes {
+		byPID[p.PID] = p
+	}
+	protected := map[int]bool{0: true, 1: true}
+	seenAncestors := map[int]bool{}
+	for q := self; q > 0 && !seenAncestors[q]; q = byPID[q].PPID {
+		seenAncestors[q] = true
+		protected[q] = true
+	}
+	for _, p := range s.Processes {
+		if protected[p.PID] {
+			continue
+		}
+		seen := map[int]bool{}
+		for q := p.PPID; q > 0 && !seen[q]; q = byPID[q].PPID {
+			seen[q] = true
+			if q == self {
+				protected[p.PID] = true
+				break
+			}
+		}
+	}
+	return protected, byPID
 }
 
 func mentions(command, root string) bool {

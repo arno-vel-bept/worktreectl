@@ -47,6 +47,22 @@ func TestParsers(t *testing.T) {
 	}
 }
 
+func TestDiscoveryAndMatchingShareCallerProtection(t *testing.T) {
+	s := Snapshot{Processes: []Process{
+		{PID: 10, PPID: 1}, {PID: 20, PPID: 10}, {PID: 21, PPID: 20},
+		{PID: 22, PPID: 21}, {PID: 30, PPID: 10},
+	}}
+	protected, _ := s.protected(20)
+	for _, pid := range []int{1, 10, 20, 21, 22} {
+		if !protected[pid] {
+			t.Fatalf("caller process %d was not protected", pid)
+		}
+	}
+	if protected[30] {
+		t.Fatal("unrelated same-user processes must still require cwd inspection")
+	}
+}
+
 func TestStopRevalidatesIdentity(t *testing.T) {
 	c := exec.Command("sleep", "60")
 	c.Dir = t.TempDir()

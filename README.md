@@ -33,7 +33,7 @@ The [public installer Gist](https://gist.github.com/arno-vel-bept/50e26e23356eac
 
 ```sh
 curl --fail --location --proto '=https' --proto-redir '=https' \
-  https://gist.githubusercontent.com/arno-vel-bept/50e26e23356eac0536732c416a2aecf6/raw/636ebcb7db3970603183bf5f210191412e8c1cb1/install.sh \
+  https://gist.githubusercontent.com/arno-vel-bept/50e26e23356eac0536732c416a2aecf6/raw/57801bbe6c4c06ffc5b6b4b954ede5e105406341/install.sh \
   -o install-worktreectl.sh
 less install-worktreectl.sh
 sh install-worktreectl.sh --version v0.1.0
@@ -47,7 +47,7 @@ Use only after trusting the installer source:
 
 ```sh
 curl --fail --location --proto '=https' --proto-redir '=https' \
-  https://gist.githubusercontent.com/arno-vel-bept/50e26e23356eac0536732c416a2aecf6/raw/636ebcb7db3970603183bf5f210191412e8c1cb1/install.sh | \
+  https://gist.githubusercontent.com/arno-vel-bept/50e26e23356eac0536732c416a2aecf6/raw/57801bbe6c4c06ffc5b6b4b954ede5e105406341/install.sh | \
   sh -s -- --version v0.1.0
 ```
 

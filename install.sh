@@ -86,7 +86,9 @@ expected=$(printf '%s' "$expected" | tr 'A-F' 'a-f')
 
 # Extract only the binary; never unpack arbitrary archive paths into HOME.
 tar -xzf "$temp/$asset" -C "$temp" worktreectl
-[ -f "$temp/worktreectl" ] && [ ! -L "$temp/worktreectl" ] || fail 'release archive has no regular worktreectl binary'
+if [ ! -f "$temp/worktreectl" ] || [ -L "$temp/worktreectl" ]; then
+    fail 'release archive has no regular worktreectl binary'
+fi
 mkdir -p "$bin_dir"
 [ ! -d "$bin_dir/worktreectl" ] || fail 'install destination is a directory'
 # Stage on the destination filesystem and rename atomically (also replaces a

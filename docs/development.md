@@ -71,7 +71,7 @@ Binaries embed version, commit, and build time. Release archives must keep a reg
 The public installer is hosted on the **same work account**:
 
 - [Gist page](https://gist.github.com/arno-vel-bept/50e26e23356eac0536732c416a2aecf6)
-- [Pinned raw installer](https://gist.githubusercontent.com/arno-vel-bept/50e26e23356eac0536732c416a2aecf6/raw/636ebcb7db3970603183bf5f210191412e8c1cb1/install.sh)
+- [Pinned raw installer](https://gist.githubusercontent.com/arno-vel-bept/50e26e23356eac0536732c416a2aecf6/raw/57801bbe6c4c06ffc5b6b4b954ede5e105406341/install.sh)
 - [Source of truth in this repository](../install.sh)
 
 Keep the Gist and repository copy byte-for-byte identical. Publish changes with GitHub CLI:
