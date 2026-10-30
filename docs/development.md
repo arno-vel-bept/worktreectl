@@ -56,8 +56,8 @@ Destructive behavior belongs in Go and must have a read-only dry-run path. Repos
 Push a semantic version tag after reviewing the code and checking CI:
 
 ```sh
-git tag v0.2.1 # Choose a new version after the published v0.2.0 release.
-git push origin v0.2.1
+git tag v0.3.1 # Choose a new version after the published v0.3.0 release.
+git push origin v0.3.1
 ```
 
 The [release workflow](../.github/workflows/release.yml) runs GoReleaser and uploads to [arno-vel-bept/worktreectl Releases](https://github.com/arno-vel-bept/worktreectl/releases):
@@ -79,7 +79,7 @@ If hosted runners are unavailable, validate the reviewed commit locally with `ma
 Start from a clean checkout of the commit to release, and choose a new version. Create the tag **locally**, without pushing it, so the automated release workflow does not start before the manual upload. GitHub can emit a tag-push event when publishing the manual release; the workflow checks for an already published release and skips GoReleaser in that case, leaving verified public assets untouched:
 
 ```sh
-version=v0.2.1 # Choose the next unreleased version.
+version=v0.3.1 # Choose the next unreleased version.
 git tag "$version"
 goreleaser release --skip=publish
 (cd dist && shasum -a 256 -c checksums.txt)

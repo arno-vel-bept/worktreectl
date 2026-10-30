@@ -42,6 +42,15 @@ builtin cd nested
 worktreectl rm
 [ "$PWD" = "$WT_MAIN" ]
 `},
+				{name: "branch_shorthand_and_rm", script: `
+worktreectl new fixes/my-feature --no-setup
+[ "$PWD" = "$WT_ROOT/fixes-my-feature" ]
+[ "$(git symbolic-ref --short HEAD)" = fixes/my-feature ]
+[ ! -e "$WT_ROOT/fixes" ]
+worktreectl rm fixes/my-feature
+[ "$PWD" = "$WT_MAIN" ]
+[ ! -e "$WT_ROOT/fixes-my-feature" ]
+`},
 				{name: "aliases_and_other_worktree", script: `
 worktreectl start first --no-setup
 [ "$PWD" = "$WT_ROOT/first" ]

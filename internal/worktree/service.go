@@ -85,25 +85,37 @@ func (s *Service) New(ctx context.Context, o NewOptions) (NewResult, error) {
 	if o.Name == "" {
 		o.Name = "wt-" + time.Now().Format("0102-150405.000000")
 	}
-	if !validName.MatchString(o.Name) {
-		return NewResult{}, diagnostic.New(fmt.Sprintf("invalid worktree name %q", o.Name), "Use letters, digits, dots, underscores, or hyphens; start with a letter or digit. For example: worktreectl new my-feature.", nil)
+	requestedName := o.Name
+	name, branch, err := s.creationNames(ctx, o)
+	if err != nil {
+		return NewResult{}, err
 	}
-	if o.Detach && o.Branch != "" {
-		return NewResult{}, fmt.Errorf("--detach and --branch are mutually exclusive")
-	}
+	o.Name = name
 	path := filepath.Join(s.Config.Root, o.Name)
 	if repo.Under(s.Config.Root, s.Repo.Common) {
-		return NewResult{}, refuse("root cannot be inside Git's metadata directory")
+		return NewResult{}, refuseHint("the worktree root is inside Git's metadata directory", "Choose a dedicated root outside .git using WORKTREECTL_ROOT or root in .devcli.toml.")
 	}
 	if _, err := os.Lstat(path); err == nil {
+		if strings.Contains(requestedName, "/") {
+			trees, err := s.Repo.Trees(ctx)
+			if err != nil {
+				return NewResult{}, diagnostic.New(fmt.Sprintf("directory %s already exists, and existing Git checkouts could not be inspected", path), "Check Git's repository permissions and run worktreectl list; nothing was overwritten.", err)
+			}
+			for _, w := range trees {
+				if w.Branch == branch {
+					return NewResult{}, branchInUse(branch, w.Path)
+				}
+			}
+			return NewResult{}, refuseHint(fmt.Sprintf("cannot create worktree: branch %q maps to directory %q, but %s already exists", branch, name, path), fmt.Sprintf("Nothing was overwritten. Use worktreectl list to inspect existing checkouts, or choose another directory: worktreectl new another-name --branch %s.", quoteValue(branch)))
+		}
 		return NewResult{}, refuseHint(fmt.Sprintf("cannot create worktree: %s already exists", path), "Choose a different name, or use worktreectl list to find and enter the existing checkout.")
 	} else if !os.IsNotExist(err) {
-		return NewResult{}, err
+		return NewResult{}, diagnostic.New(fmt.Sprintf("cannot inspect the intended worktree directory %s", path), "Make sure the worktree root is a directory, with accessible and writable parent directories.", err)
 	}
 	if o.Fetch {
 		s.Log("fetching repository")
 		if _, err := s.Repo.Git(ctx, "fetch", "--prune"); err != nil {
-			return NewResult{}, err
+			return NewResult{}, diagnostic.New("could not fetch the repository before worktree creation", "Check the remote URL with git remote -v, your credentials, and the network connection; no checkout was created. Git reported: "+strings.TrimPrefix(err.Error(), "git failed: "), err)
 		}
 	}
 	if o.Base == "" {
@@ -114,27 +126,23 @@ func (s *Service) New(ctx context.Context, o NewOptions) (NewResult, error) {
 		o.Base = strings.TrimSpace(string(out))
 	}
 	if strings.HasPrefix(o.Base, "-") {
-		return NewResult{}, fmt.Errorf("invalid base ref %q", o.Base)
+		return NewResult{}, diagnostic.New(fmt.Sprintf("invalid base ref %q", o.Base), "Use --base with an existing branch, tag, or commit; it cannot start with a hyphen.", nil)
 	}
 	if _, err := s.Repo.Git(ctx, "rev-parse", "--verify", "--end-of-options", o.Base+"^{commit}"); err != nil {
 		return NewResult{}, diagnostic.New(fmt.Sprintf("base %q does not name a commit", o.Base), "Check the branch or tag name; add --fetch if you need a remote branch.", err)
 	}
-	branch := o.Branch
 	if !o.Detach {
-		if branch == "" {
-			branch = s.Config.BranchPrefix + o.Name
-		}
-		if _, err := s.Repo.Git(ctx, "check-ref-format", "refs/heads/"+branch); err != nil || strings.HasPrefix(branch, "-") {
-			return NewResult{}, diagnostic.New(fmt.Sprintf("invalid branch name %q", branch), "Use a valid Git branch name, such as feature/login; avoid spaces and leading hyphens.", nil)
-		}
 		trees, err := s.Repo.Trees(ctx)
 		if err != nil {
 			return NewResult{}, err
 		}
 		for _, w := range trees {
 			if w.Branch == branch {
-				return NewResult{}, refuseHint(fmt.Sprintf("branch %q is already checked out at %s", branch, w.Path), "Enter that checkout, or choose a different branch with --branch NAME.")
+				return NewResult{}, branchInUse(branch, w.Path)
 			}
+		}
+		if err := s.checkBranchNamespace(ctx, branch); err != nil {
+			return NewResult{}, err
 		}
 	}
 	port, err := s.pickPort(ctx, o.Name)
@@ -144,7 +152,7 @@ func (s *Service) New(ctx context.Context, o NewOptions) (NewResult, error) {
 	if repo.Under(s.Config.Root, s.Repo.Main) {
 		rel, _ := filepath.Rel(s.Repo.Main, s.Config.Root)
 		if rel == "." || strings.ContainsAny(rel, "\n\r*?[]") {
-			return NewResult{}, refuse("root must be a dedicated directory without Git glob characters")
+			return NewResult{}, refuseHint("the worktree root must be a dedicated directory without Git glob characters", "Set root in .devcli.toml or WORKTREECTL_ROOT to a dedicated directory, preferably beside the main checkout.")
 		}
 		if err := s.Repo.Exclude("/" + filepath.ToSlash(rel) + "/"); err != nil {
 			return NewResult{}, err
@@ -166,7 +174,7 @@ func (s *Service) New(ctx context.Context, o NewOptions) (NewResult, error) {
 		}
 	}
 	if err := os.MkdirAll(s.Config.Root, 0755); err != nil {
-		return NewResult{}, err
+		return NewResult{}, diagnostic.New(fmt.Sprintf("cannot create the worktree root %s", s.Config.Root), "Check directory permissions and available disk space, or choose a writable WORKTREECTL_ROOT.", err)
 	}
 	args := []string{"worktree", "add"}
 	if o.Detach {
@@ -179,7 +187,10 @@ func (s *Service) New(ctx context.Context, o NewOptions) (NewResult, error) {
 		args = append(args, "--no-track", "-b", branch, path, o.Base)
 	}
 	if _, err := s.Repo.Git(ctx, args...); err != nil {
-		return NewResult{}, err
+		return NewResult{}, diagnostic.New(fmt.Sprintf("Git could not create the worktree at %s", path), "Check directory permissions, available space, branch/ref conflicts, and git worktree list before retrying. Git reported: "+strings.TrimPrefix(err.Error(), "git failed: "), err)
+	}
+	if strings.Contains(requestedName, "/") {
+		s.Log("branch %s uses worktree directory %s", branch, name)
 	}
 	// Do not roll back a worktree after a failed hook/copy: a hook may already
 	// have created user data. Leave a clear recovery path instead.

@@ -434,7 +434,7 @@ func splitCommand(cmd *cobra.Command, args []string) (string, []string, error) {
 func (a *app) newCommand() *cobra.Command {
 	o := worktree.NewOptions{}
 	reuseDeps := false
-	c := &cobra.Command{Use: "new [NAME] [flags] [-- CMD...]", Aliases: []string{"start"}, Short: "Create a worktree, copy local files, and run setup", RunE: func(cmd *cobra.Command, args []string) error {
+	c := &cobra.Command{Use: "new [NAME|BRANCH] [flags] [-- CMD...]", Aliases: []string{"start"}, Short: "Create a worktree, copy local files, and run setup", Long: "Create a worktree and branch, then copy local files and run setup.\nA NAME containing / selects that exact Git branch and gets a safe, flat directory name.\nPlain names keep the configured branch prefix. Use a flat NAME with --branch to choose the directory separately.", RunE: func(cmd *cobra.Command, args []string) error {
 		name, child, err := splitCommand(cmd, args)
 		if err != nil {
 			return err
@@ -442,6 +442,14 @@ func (a *app) newCommand() *cobra.Command {
 		o.Name = name
 		if o.Detach && o.Branch != "" {
 			return usage("--detach and --branch are mutually exclusive")
+		}
+		if strings.Contains(name, "/") {
+			if o.Detach {
+				return usage("a slash-containing NAME selects a branch and cannot be used with --detach; use a flat name with --detach --base REF instead")
+			}
+			if o.Branch != "" && o.Branch != name {
+				return usage("the slash-containing NAME and --branch select different branches; omit --branch, or choose a flat NAME with --branch BRANCH")
+			}
 		}
 		s, err := a.init(cmd.Context())
 		if err != nil {
@@ -479,7 +487,7 @@ func (a *app) newCommand() *cobra.Command {
 	}}
 	f := c.Flags()
 	f.StringVarP(&o.Base, "base", "b", "", "Start from this ref (default: current checkout's HEAD)")
-	f.StringVar(&o.Branch, "branch", "", "Branch to create/reuse (default: configured prefix + NAME)")
+	f.StringVar(&o.Branch, "branch", "", "Branch to create/reuse (default: slash-containing NAME verbatim, otherwise configured prefix + NAME)")
 	f.BoolVarP(&o.Detach, "detach", "d", false, "Create a detached HEAD instead of a branch")
 	f.BoolVar(&o.Fetch, "fetch", false, "Fetch/prune remotes before creation")
 	f.BoolVar(&o.NoCopy, "no-copy", false, "Skip copying local files")

@@ -27,7 +27,7 @@ Built in Go with [Cobra](https://github.com/spf13/cobra) and [Lip Gloss](https:/
 
 The [public installer Gist](https://gist.github.com/arno-vel-bept/50e26e23356eac0536732c416a2aecf6) downloads binaries from [GitHub Releases](https://github.com/arno-vel-bept/worktreectl/releases), verifies their SHA-256 checksums, and installs to `~/.local/bin`.
 
-Current release: **[v0.2.0](https://github.com/arno-vel-bept/worktreectl/releases/tag/v0.2.0)**.
+Current release: **[v0.3.0](https://github.com/arno-vel-bept/worktreectl/releases/tag/v0.3.0)**.
 
 ### Download and inspect first (recommended)
 
@@ -36,7 +36,7 @@ curl --fail --location --proto '=https' --proto-redir '=https' \
   https://gist.githubusercontent.com/arno-vel-bept/50e26e23356eac0536732c416a2aecf6/raw/1d269e77069c049fcd5ce0873efab868bb48ad42/install.sh \
   -o install-worktreectl.sh
 less install-worktreectl.sh
-sh install-worktreectl.sh --version v0.2.0
+sh install-worktreectl.sh --version v0.3.0
 ```
 
 The raw URL is pinned to the reviewed installer revision, not a moving Gist URL.
@@ -48,7 +48,7 @@ Use only after trusting the installer source:
 ```sh
 curl --fail --location --proto '=https' --proto-redir '=https' \
   https://gist.githubusercontent.com/arno-vel-bept/50e26e23356eac0536732c416a2aecf6/raw/1d269e77069c049fcd5ce0873efab868bb48ad42/install.sh | \
-  sh -s -- --version v0.2.0
+  sh -s -- --version v0.3.0
 ```
 
 The installer prints any PATH changes you need; it never edits shell startup files. Customize the destination with `--bin-dir /absolute/path`. Checksums catch corrupted downloads, not a compromised release account.
@@ -98,7 +98,7 @@ Autocd needs the shell function because a binary cannot change its parent shell'
 
 | Command | What it does |
 | --- | --- |
-| `new [NAME] [-- CMD...]` | Create a worktree and branch; copy local files; run setup |
+| `new [NAME\|BRANCH] [-- CMD...]` | Create a worktree and branch; copy local files; run setup |
 | `exec [NAME] [-- CMD...]` | Run a command with that worktree's environment |
 | `path [NAME]` | Print its path |
 | `list` / `ps [NAME]` | Inspect checkouts and the resources tied to them |
@@ -137,6 +137,18 @@ Everything is optional. See the [annotated example](examples/devcli.toml) and [c
 - **Easy upgrades.** Run `worktreectl upgrade` for the latest stable release, or `upgrade --check` to check without changing files.
 
 See the [dependency setup guide](docs/reference.md#dependency-setup) for supported layouts, cleanup ownership, and sharing limitations.
+
+### What's new in v0.3.0
+
+Slash-containing branch names can be passed directly to `new`:
+
+```sh
+worktreectl new fixes/my-feature-name
+# Exact branch: fixes/my-feature-name
+# Flat worktree directory: fixes-my-feature-name
+```
+
+Git validates the branch before conversion; invalid names, directory collisions, and branch-prefix conflicts get helpful recovery hints. Plain names keep their existing branch-prefix behavior. With older binaries, use `worktreectl new my-feature-name --branch fixes/my-feature-name`, or upgrade with `worktreectl upgrade`. See the [branch naming guide](docs/reference.md#branch-shorthand-and-safe-directories) for collision handling and special names.
 
 ## Safe defaults—not silent destruction
 

@@ -57,7 +57,7 @@ func TestCommonCreationErrorsHaveRecoveryHints(t *testing.T) {
 		{[]string{"new", "existing", "--no-setup"}, 3, "already exists"},
 		{[]string{"new", "other", "--branch", "wt/existing", "--no-setup"}, 3, "already checked out"},
 		{[]string{"new", "other", "--base", "missing-ref", "--no-setup"}, 1, "does not name a commit"},
-		{[]string{"new", "bad/name", "--no-setup"}, 1, "invalid worktree name"},
+		{[]string{"new", "bad name", "--no-setup"}, 1, "invalid worktree name"},
 		{[]string{"path", "missing"}, 1, "no worktree matches"},
 		{[]string{"rm"}, 3, "main checkout"},
 		{[]string{"list", "--bad-flag"}, 2, "unknown flag"},

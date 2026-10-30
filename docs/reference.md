@@ -21,7 +21,7 @@ Names can be a worktree directory name, full path, or branch. Omit the name to u
 
 | Command | Purpose |
 | --- | --- |
-| `new [NAME] [-- CMD...]` | Create a branch/worktree, copy local files, generate environment, run setup |
+| `new [NAME\|BRANCH] [-- CMD...]` | Create a branch/worktree, copy local files, generate environment, run setup |
 | `exec [NAME] [-- CMD...]` | Run a command with the worktree environment; defaults to `$SHELL` on a terminal |
 | `path [NAME]` | Print just the path |
 | `list` | Show branches, clean/dirty state, commits ahead of the base, and process counts |
@@ -46,6 +46,34 @@ Useful flags:
 - Global: `--json`, `--non-interactive`, `--config FILE`, `--no-docker`, `--no-cd`, `--color auto|always|never`.
 
 Use `--` before subprocess arguments so their flags belong to the subprocess, not this CLI. `new` defaults to the **current checkout's HEAD**, not the cleanup base. An existing branch is reused; `--base` then has no effect.
+
+### Branch shorthand and safe directories
+
+A positional name containing `/` selects that **exact Git branch**, without adding `branch_prefix`. Its worktree directory is flattened instead of treating the branch as a filesystem path:
+
+```sh
+worktreectl new fixes/my-feature-name
+# Branch: fixes/my-feature-name
+# Directory: <worktree-root>/fixes-my-feature-name
+
+worktreectl path fixes/my-feature-name
+worktreectl exec fixes/my-feature-name -- npm run dev
+worktreectl rm fixes/my-feature-name --dry-run
+```
+
+Git validates the literal branch name before directory conversion, fetching, or creation. Invalid refs—including traversal-like names, repeated slashes, spaces, and `.lock` components—are rejected with a recovery hint, not silently repaired. Any Git-valid slash-containing name can be represented by a safe directory: `/` and other nonportable characters become `-`, leading punctuation is removed, and directory names are capped at 128 ASCII characters. Long names get a distinguishing hash suffix; names containing no usable ASCII get `branch-<hash>`. The branch itself is never shortened or rewritten. Git's normal ref-storage constraints still apply.
+
+Plain names retain existing behavior: `new my-feature` creates directory `my-feature` and branch `wt/my-feature` (or the configured prefix). For a chosen directory, use the existing explicit form:
+
+```sh
+worktreectl new alternate-directory --branch fixes/my-feature-name
+```
+
+Sanitization is not one-to-one: `fixes/my-feature` and `fixes-my/feature` both map to `fixes-my-feature`. Existing directories, files, and symlinks are never overwritten; collision errors explain how to choose a different flat name with `--branch`. If the branch is already checked out, use that checkout instead—changing only the directory cannot check out the same branch twice. Git branch-prefix conflicts (such as existing `fixes` versus new `fixes/feature`) are also explained before creation.
+
+A slash-containing name cannot be combined with `--detach` or a different `--branch`; use a flat name with `--detach --base REF`, or a flat name with `--branch BRANCH`. Repeating the same branch with `--branch` is allowed. `start` supports the same shorthand. JSON `data.name` and `WORKTREE_NAME` contain the safe directory name, while `data.branch` and `WORKTREE_BRANCH` preserve the original branch. Failed setup keeps the checkout and gives recovery commands using its safe name; autocd, branch lookup, and cleanup use its actual flat path.
+
+Branch shorthand is available starting with v0.3.0. With v0.2.0 or older, use the explicit flat-name/`--branch` form or upgrade first.
 
 ### Automatic directory changes
 
@@ -216,7 +244,7 @@ See the [installation guide](../README.md#install) for the published [installer 
 ```sh
 worktreectl upgrade --check
 worktreectl upgrade
-worktreectl upgrade --version v0.2.0
+worktreectl upgrade --version v0.3.0
 worktreectl upgrade --check --json
 ```
 
